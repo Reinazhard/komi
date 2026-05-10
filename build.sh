@@ -73,12 +73,26 @@ echo "=================================================="
 
 # --- Phase 1: Kernel Compilation ---
 build_kernel() {
-    echo "[*] Phase 1: Compiling Kernel, DTBs, and In-Tree Modules..."
+    echo "[*] Phase 1a: Compiling Kernel Image..."
     make ARCH="$ARCH" O="$OUT_DIR" LLVM=1 LLVM_IAS=1 \
          KCFLAGS="$KCFLAGS" \
          HOSTCFLAGS="$HOSTCFLAGS" \
          $EXTRA_KBUILD_FLAGS \
-         -j"$JOBS" Image dtbs modules
+         -j"$JOBS" Image
+
+    echo "[*] Phase 1b: Compiling DTBs..."
+    make ARCH="$ARCH" O="$OUT_DIR" LLVM=1 LLVM_IAS=1 \
+         KCFLAGS="$KCFLAGS" \
+         HOSTCFLAGS="$HOSTCFLAGS" \
+         $EXTRA_KBUILD_FLAGS \
+         -j"$JOBS" dtbs
+
+    echo "[*] Phase 1c: Compiling In-Tree Modules..."
+    make ARCH="$ARCH" O="$OUT_DIR" LLVM=1 LLVM_IAS=1 \
+         KCFLAGS="$KCFLAGS" \
+         HOSTCFLAGS="$HOSTCFLAGS" \
+         $EXTRA_KBUILD_FLAGS \
+         -j"$JOBS" modules
 }
 
 # --- Phase 2: OOT Modules ---
