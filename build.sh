@@ -99,12 +99,6 @@ build_modules() {
          -j"$JOBS" modules
 }
 
-build_kernel() {
-    build_kernel_image
-    build_dtbs
-    build_modules
-}
-
 # --- Phase 2: OOT Modules ---
 build_oot_modules() {
     echo "[*] Phase 2: Compiling OOT Modules..."
@@ -214,6 +208,13 @@ EOF
             echo "  [!] Warning: Source directory $src_path not found. Skipping."
         fi
     done
+}
+
+build_kernel() {
+    build_kernel_image
+    build_dtbs
+    build_modules
+    build_oot_modules
 }
 
 # --- Phase 3: Module Splitting & Staging ---
@@ -355,7 +356,6 @@ case "$1" in
     "assemble") assemble_images ;;
     "all"|*)
         build_kernel
-        build_oot_modules
         stage_modules
         assemble_images
         ;;
