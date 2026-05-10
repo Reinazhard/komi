@@ -17,6 +17,7 @@ set -e
 
 # --- Configuration & Environment Selection ---
 CWD=$(pwd)
+VERBOSE=0
 
 # Priority: 1. Flag (-c/--config), 2. $BUILD_CONFIG env, 3. build.env in CWD
 while [[ $# -gt 0 ]]; do
@@ -24,6 +25,10 @@ while [[ $# -gt 0 ]]; do
         -c|--config)
             CLI_CONFIG="$2"
             shift 2
+            ;;
+        -v|--verbose)
+            VERBOSE=1
+            shift
             ;;
         *)
             POSITIONAL_ARGS+=("$1")
@@ -130,8 +135,10 @@ EOF
                 # Strip KBUILD_EXTRA_SYMBOLS from makefile_opts as we handle it separately
                 makefile_opts=$(echo "$makefile_opts" | sed -E 's/KBUILD_EXTRA_SYMBOLS\s*[+:]?=[^ ]*//g')
                 
-                echo "  [DEBUG] Extracted opts: $makefile_opts"
-                echo "  [DEBUG] Extracted syms: $mk_extra_syms"
+                if [ "$VERBOSE" -eq 1 ]; then
+                    echo "  [DEBUG] Extracted opts: $makefile_opts"
+                    echo "  [DEBUG] Extracted syms: $mk_extra_syms"
+                fi
             fi
 
             # Merge and de-duplicate extra symbols
