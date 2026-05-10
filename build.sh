@@ -284,7 +284,7 @@ assemble_images() {
         done
 
         if [ "${#dtbo_paths[@]}" -gt 0 ]; then
-            mkdtboimg create "$DIST_DIR/dtbo.img" --page_size "${PAGE_SIZE:-4096}" "${dtbo_paths[@]}"
+            mkdtboimg create "$DIST_DIR/dtbo.img" "${MKDTBOIMG_OPTIONS[@]}" "${dtbo_paths[@]}"
         fi
     fi
 
