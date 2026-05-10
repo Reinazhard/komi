@@ -11,53 +11,76 @@
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 # GNU General Public License for more details.
-# Unified "One-Click" Build & Assembly Script for Annibale (Xiaomi SM8750)
-# REPLACING BAZEL WITH PURE SHELL + MAKE
+# Unified Build & Assembly Script
+# Separates mechanism (this script) from configuration (build.env)
 set -e
 
-# --- Configuration & Environment ---
+# --- Configuration & Environment Selection ---
 CWD=$(pwd)
-BUILD_CONFIG="devices/annibale/build.env"
 
-if [ -f "$BUILD_CONFIG" ]; then
-    echo "[*] Sourcing environment from $BUILD_CONFIG"
-    source "$BUILD_CONFIG"
+# Priority: 1. Flag (-c/--config), 2. $BUILD_CONFIG env, 3. build.env in CWD
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -c|--config)
+            CLI_CONFIG="$2"
+            shift 2
+            ;;
+        *)
+            POSITIONAL_ARGS+=("$1")
+            shift
+            ;;
+    esac
+done
+set -- "${POSITIONAL_ARGS[@]}"
+
+if [ -n "$CLI_CONFIG" ]; then
+    ENV_FILE="$CLI_CONFIG"
+elif [ -n "$BUILD_CONFIG" ]; then
+    ENV_FILE="$BUILD_CONFIG"
 else
-    echo "[!] Error: $BUILD_CONFIG not found."
+    ENV_FILE="$CWD/build.env"
+fi
+
+if [ -f "$ENV_FILE" ]; then
+    echo "[*] Sourcing environment from $ENV_FILE"
+    source "$ENV_FILE"
+else
+    echo "[!] Error: Configuration file $ENV_FILE not found."
     exit 1
 fi
 
-# Set defaults if not in build.env
+# Set defaults for common variables if not in build.env
 OUT_DIR="${OUT_DIR:-$CWD/out}"
 DIST_DIR="${DIST_DIR:-$CWD/dist}"
 STAGING_DIR="$OUT_DIR/staging"
 VENDOR_STAGING="$STAGING_DIR/vendor_dlkm"
 SYSTEM_STAGING="$STAGING_DIR/system_dlkm"
 TOOLS_DIR="${AOSP_TOOLS_DIR:-$CWD/build-tools/linux_musl-x86/bin}"
-KERNEL_IMAGE="$OUT_DIR/arch/arm64/boot/Image"
 JOBS=${JOBS:-$(nproc)}
+ARCH="${ARCH:-arm64}"
 
 export PATH="$TOOLS_DIR:$PATH"
 
 echo "=================================================="
-echo "  Annibale Unified Build System"
+echo "  Kernel Unified Build System"
+echo "  Device: ${DEVICE_NAME:-Unknown}"
 echo "=================================================="
 
 # --- Phase 1: Kernel Compilation ---
 build_kernel() {
     echo "[*] Phase 1: Compiling Kernel, DTBs, and In-Tree Modules..."
-    make ARCH=arm64 O="$OUT_DIR" LLVM=1 LLVM_IAS=1 \
-         KCFLAGS="-Wno-error -D__ANDROID_COMMON_KERNEL__" \
-         HOSTCFLAGS="-Wno-error" \
+    make ARCH="$ARCH" O="$OUT_DIR" LLVM=1 LLVM_IAS=1 \
+         KCFLAGS="$KCFLAGS" \
+         HOSTCFLAGS="$HOSTCFLAGS" \
+         $EXTRA_KBUILD_FLAGS \
          -j"$JOBS" Image dtbs modules
 }
 
-# --- Phase 2: Techpack (OOT) Modules ---
+# --- Phase 2: OOT Modules ---
 build_oot_modules() {
-    echo "[*] Phase 2: Compiling OOT Modules (Techpack)..."
+    echo "[*] Phase 2: Compiling OOT Modules..."
     local symvers_files=""
     
-    # Export these so they are available to all sub-makes and techpack Makefiles
     export KERNEL_SRC="$CWD"
     export KERNEL_ROOT="$CWD"
     export O="$OUT_DIR"
@@ -72,23 +95,16 @@ build_oot_modules() {
             local mod_name=$(basename "$src_path")
             echo "  [+] Building OOT: $mod_name ($root_var)"
             
-            # Use root_var if provided, otherwise fallback to auto-derived name
             if [ -z "$root_var" ]; then
                 root_var=$(echo "$mod_name" | tr '-' '_' | tr '[:lower:]' '[:upper:]')_ROOT
             fi
 
-            # Some techpacks expect the root variable to have a trailing slash
-            # and potentially point to the parent if they use $(ROOT)subdir/ format
             local root_val="$src_path"
+            # Platform-specific root path adjustments should ideally be in build.env
+            # but we keep this logic for compatibility with existing techpack structures
             if [[ "$root_var" == MSM_*_ROOT ]] || [[ "$root_var" == SYNC_FENCE_ROOT ]] || [[ "$root_var" == VIDEO_ROOT ]]; then
                 root_val="$src_path/../"
             fi
-
-            # Collect existing Module.symvers for symbols cross-referencing
-            local extra_symbols=""
-            for s in $symvers_files; do
-                extra_symbols+=" KBUILD_EXTRA_SYMBOLS+=$s"
-            done
 
             # Surgically extract KBUILD_OPTIONS from Makefile if it exists
             # to support modules that define their own configs there
@@ -146,23 +162,21 @@ EOF
                 extra_symbols_arg="KBUILD_EXTRA_SYMBOLS=$final_extra_symbols"
             fi
 
-            echo "  [DEBUG] Command: make -C $CWD O=$OUT_DIR M=$rel_src_path KERNEL_SRC=$CWD KERNEL_ROOT=$CWD $root_var=$root_val ARCH=arm64 LLVM=1 LLVM_IAS=1 KCFLAGS=\"-Wno-error -D__ANDROID_COMMON_KERNEL__\" CONFIG_ARCH_SUN=y $makefile_opts $extra_symbols_arg -j$JOBS modules"
+            # Build the module
             make -C "$CWD" O="$OUT_DIR" M="$rel_src_path" \
                  KERNEL_SRC="$CWD" \
                  KERNEL_ROOT="$CWD" \
                  "$root_var"="$root_val" \
-                 ARCH=arm64 LLVM=1 LLVM_IAS=1 \
-                 KCFLAGS="-Wno-error -D__ANDROID_COMMON_KERNEL__" \
-                 CONFIG_ARCH_SUN=y \
+                 ARCH="$ARCH" LLVM=1 LLVM_IAS=1 \
+                 KCFLAGS="$KCFLAGS" \
+                 $EXTRA_KBUILD_FLAGS \
                  $makefile_opts \
                  "$extra_symbols_arg" \
                  -j"$JOBS" modules
 
-            # Record this module's symvers for subsequent builds
-            # The Module.symvers is generated in the output directory
+            # Track symvers for symbol propagation
             if [ -f "$OUT_DIR/$rel_src_path/Module.symvers" ]; then
                 symvers_files="$symvers_files $OUT_DIR/$rel_src_path/Module.symvers"
-                # Symlink to source tree to satisfy techpack Makefiles that look there
                 ln -sf "$OUT_DIR/$rel_src_path/Module.symvers" "$src_path/Module.symvers"
             fi
         else
@@ -178,20 +192,17 @@ stage_modules() {
     mkdir -p "$VENDOR_STAGING/lib/modules"
     mkdir -p "$SYSTEM_STAGING/lib/modules"
 
-    # 1. Install In-Tree Modules to a temporary location
     TEMP_STAGING="$STAGING_DIR/temp"
     mkdir -p "$TEMP_STAGING"
-    make ARCH=arm64 O="$OUT_DIR" LLVM=1 LLVM_IAS=1 \
+    make ARCH="$ARCH" O="$OUT_DIR" LLVM=1 LLVM_IAS=1 \
          INSTALL_MOD_PATH="$TEMP_STAGING" modules_install
     
     KVER=$(ls "$TEMP_STAGING/lib/modules")
     
-    # 2. Split In-Tree Modules
     echo "  [+] Sorting in-tree modules based on $VENDOR_DLKM_MODULES_LIST"
     mkdir -p "$VENDOR_STAGING/lib/modules/$KVER"
     mkdir -p "$SYSTEM_STAGING/lib/modules/$KVER"
     
-    # Copy essential module files for depmod
     for file in modules.order modules.builtin modules.builtin.modinfo; do
         if [ -f "$TEMP_STAGING/lib/modules/$KVER/$file" ]; then
             cp "$TEMP_STAGING/lib/modules/$KVER/$file" "$VENDOR_STAGING/lib/modules/$KVER/"
@@ -199,26 +210,27 @@ stage_modules() {
         fi
     done
     
-    while read -r mod_path; do
-        mod_name=$(basename "$mod_path")
-        # Find the module in temp staging and move to vendor staging
-        find "$TEMP_STAGING/lib/modules/$KVER" -name "$mod_name" -exec mv {} "$VENDOR_STAGING/lib/modules/$KVER/" \;
-    done < "$VENDOR_DLKM_MODULES_LIST"
+    if [ -f "$VENDOR_DLKM_MODULES_LIST" ]; then
+        while read -r mod_path; do
+            mod_name=$(basename "$mod_path")
+            find "$TEMP_STAGING/lib/modules/$KVER" -name "$mod_name" -exec mv {} "$VENDOR_STAGING/lib/modules/$KVER/" \;
+        done < "$VENDOR_DLKM_MODULES_LIST"
+    fi
 
-    # Remaining modules in TEMP_STAGING go to SYSTEM_STAGING
     find "$TEMP_STAGING/lib/modules/$KVER" -name "*.ko" -exec mv {} "$SYSTEM_STAGING/lib/modules/$KVER/" \;
 
-    # 3. Add OOT Modules to Vendor Staging
-    echo "  [+] Adding OOT modules to vendor_dlkm..."
-    find "$CWD/techpack" -name "*.ko" -exec cp {} "$VENDOR_STAGING/lib/modules/$KVER/" \;
+    # OOT Module Collection
+    echo "  [+] Collecting OOT modules from output tree..."
+    for oot_dir in "${OOT_MODULE_DIRS[@]}"; do
+        if [ -d "$OUT_DIR/$oot_dir" ]; then
+            find "$OUT_DIR/$oot_dir" -name "*.ko" -exec cp {} "$VENDOR_STAGING/lib/modules/$KVER/" \;
+        fi
+    done
 
-    # 4. Clean up staging (remove symlinks)
     find "$STAGING_DIR" -type l -delete
 
-    # 5. Run depmod for each staging area
-    echo "  [+] Running depmod for vendor_dlkm..."
+    echo "  [+] Running depmod..."
     depmod -b "$VENDOR_STAGING" "$KVER"
-    echo "  [+] Running depmod for system_dlkm..."
     depmod -b "$SYSTEM_STAGING" "$KVER"
 }
 
@@ -226,10 +238,11 @@ stage_modules() {
 assemble_images() {
     echo "[*] Phase 4: Packaging Images..."
     mkdir -p "$DIST_DIR"
+    local KERNEL_IMAGE="$OUT_DIR/arch/$ARCH/boot/${KERNEL_IMAGE_NAME:-Image}"
 
     # 1. boot.img
     if [ -f "$KERNEL_IMAGE" ]; then
-        echo "  [+] Packaging boot.img (Header v4)..."
+        echo "  [+] Packaging boot.img..."
         mkbootimg \
             --kernel "$KERNEL_IMAGE" \
             --header_version "$BOOT_HEADER_VERSION" \
@@ -241,7 +254,7 @@ assemble_images() {
         echo "  [+] Building dtbo.img..."
         local dtbo_paths=()
         for dtbo in "${DTBO_LIST[@]}"; do
-            local path="$OUT_DIR/arch/arm64/boot/dts/vendor/qcom/$dtbo"
+            local path="$OUT_DIR/$DTS_OUT_DIR/$dtbo"
             if [ -f "$path" ]; then
                 dtbo_paths+=("$path")
             else
@@ -256,13 +269,13 @@ assemble_images() {
 
     # 3. vendor_boot.img (with concatenated DTB)
     if [ "${#DTB_LIST[@]}" -gt 0 ]; then
-        echo "  [+] Building vendor_boot.img (with concatenated DTB)..."
+        echo "  [+] Building vendor_boot.img..."
         local dtb_img="$OUT_DIR/dtb.img"
         rm -f "$dtb_img"
         
         local found_dtbs=0
         for dtb in "${DTB_LIST[@]}"; do
-            local path="$OUT_DIR/arch/arm64/boot/dts/vendor/qcom/$dtb"
+            local path="$OUT_DIR/$DTS_OUT_DIR/$dtb"
             if [ -f "$path" ]; then
                 cat "$path" >> "$dtb_img"
                 found_dtbs=$((found_dtbs + 1))
@@ -280,23 +293,19 @@ assemble_images() {
     fi
 
     # 4. vendor_dlkm.img & system_dlkm.img
-    # Default partition size: 512MB
     local img_size="${PARTITION_SIZE:-536870912}"
-
     for part in "vendor_dlkm" "system_dlkm"; do
         echo "  [+] Building ${part}.img..."
         PROP_FILE="$OUT_DIR/${part}.prop"
         cat <<EOF > "$PROP_FILE"
 fs_type=ext4
 mount_point=${part}
-partition_size=$PARTITION_SIZE
+partition_size=$img_size
 extfs_sparse_flag=-s
 ext_mkuserimg=mkuserimg_mke2fs
 mke2fs=mke2fs
 e2fsdroid=e2fsdroid
 EOF
-        
-        # staging_dir is $STAGING_DIR/$part
         build_image "$STAGING_DIR/$part" "$PROP_FILE" "$DIST_DIR/${part}.img" "/${part}"
     done
 }
