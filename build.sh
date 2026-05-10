@@ -294,18 +294,10 @@ assemble_images() {
         done
 
         if [ "${#dtbo_paths[@]}" -gt 0 ]; then
-            # Split MKDTBOIMG_OPTIONS into an array to ensure correct argument passing
-            local mkdtbo_args=()
-            read -r -a mkdtbo_args <<< "$MKDTBOIMG_OPTIONS"
-            
-            local mkdtbo_cmd=(mkdtboimg create "$DIST_DIR/dtbo.img")
-            mkdtbo_cmd+=("${mkdtbo_args[@]}")
-            mkdtbo_cmd+=("${dtbo_paths[@]}")
-
             if [ "$VERBOSE" -eq 1 ]; then
-                echo "  [DEBUG] Executing: ${mkdtbo_cmd[*]}"
+                echo "  [DEBUG] Running mkdtboimg create \"$DIST_DIR/dtbo.img\" $MKDTBOIMG_OPTIONS ${dtbo_paths[*]}"
             fi
-            "${mkdtbo_cmd[@]}"
+            mkdtboimg create "$DIST_DIR/dtbo.img" $MKDTBOIMG_OPTIONS "${dtbo_paths[@]}"
         fi
     fi
 
