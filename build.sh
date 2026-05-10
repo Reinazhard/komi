@@ -72,27 +72,37 @@ echo "  Device: ${DEVICE_NAME:-Unknown}"
 echo "=================================================="
 
 # --- Phase 1: Kernel Compilation ---
-build_kernel() {
+build_kernel_image() {
     echo "[*] Phase 1a: Compiling Kernel Image..."
     make ARCH="$ARCH" O="$OUT_DIR" LLVM=1 LLVM_IAS=1 \
          KCFLAGS="$KCFLAGS" \
          HOSTCFLAGS="$HOSTCFLAGS" \
          $EXTRA_KBUILD_FLAGS \
          -j"$JOBS" Image
+}
 
+build_dtbs() {
     echo "[*] Phase 1b: Compiling DTBs..."
     make ARCH="$ARCH" O="$OUT_DIR" LLVM=1 LLVM_IAS=1 \
          KCFLAGS="$KCFLAGS" \
          HOSTCFLAGS="$HOSTCFLAGS" \
          $EXTRA_KBUILD_FLAGS \
          -j"$JOBS" dtbs
+}
 
+build_modules() {
     echo "[*] Phase 1c: Compiling In-Tree Modules..."
     make ARCH="$ARCH" O="$OUT_DIR" LLVM=1 LLVM_IAS=1 \
          KCFLAGS="$KCFLAGS" \
          HOSTCFLAGS="$HOSTCFLAGS" \
          $EXTRA_KBUILD_FLAGS \
          -j"$JOBS" modules
+}
+
+build_kernel() {
+    build_kernel_image
+    build_dtbs
+    build_modules
 }
 
 # --- Phase 2: OOT Modules ---
@@ -284,7 +294,18 @@ assemble_images() {
         done
 
         if [ "${#dtbo_paths[@]}" -gt 0 ]; then
-            mkdtboimg create "$DIST_DIR/dtbo.img" "${MKDTBOIMG_OPTIONS[@]}" "${dtbo_paths[@]}"
+            # Split MKDTBOIMG_OPTIONS into an array to ensure correct argument passing
+            local mkdtbo_args=()
+            read -r -a mkdtbo_args <<< "$MKDTBOIMG_OPTIONS"
+            
+            local mkdtbo_cmd=(mkdtboimg create "$DIST_DIR/dtbo.img")
+            mkdtbo_cmd+=("${mkdtbo_args[@]}")
+            mkdtbo_cmd+=("${dtbo_paths[@]}")
+
+            if [ "$VERBOSE" -eq 1 ]; then
+                echo "  [DEBUG] Executing: ${mkdtbo_cmd[*]}"
+            fi
+            "${mkdtbo_cmd[@]}"
         fi
     fi
 
@@ -334,6 +355,9 @@ EOF
 # --- Execution ---
 case "$1" in
     "kernel")   build_kernel ;;
+    "image")    build_kernel_image ;;
+    "dtbs")     build_dtbs ;;
+    "modules")  build_modules ;;
     "oot")      build_oot_modules ;;
     "stage")    stage_modules ;;
     "assemble") assemble_images ;;
