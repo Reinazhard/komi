@@ -25,13 +25,13 @@ else
     git clone "$REPO_URL" "$TARGET_DIR"
 fi
 
-# 2. Create Symlinks
+# 2. Create symlinks
 echo "[*] Creating symlinks..."
 ln -sf "$TARGET_DIR/build.sh" "build.sh"
 ln -sf "$TARGET_DIR/build.env" "build.env"
 ln -sf "$TARGET_DIR/build_utils.sh" "build_utils.sh"
 
-# 3. Tool Availability Verification
+# 3. Validate tool availability
 validate_environment() {
     echo "[*] Validating build tools..."
     local tools_dir="$CWD/$TARGET_DIR/tools"

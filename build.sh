@@ -11,6 +11,7 @@
 # but WITHOUT ANY WARRANTY; without even the implied warranty of
 # MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 # GNU General Public License for more details.
+
 # Unified Build & Assembly Script
 # Separates mechanism (this script) from configuration (build.env)
 set -e
@@ -54,7 +55,7 @@ else
     exit 1
 fi
 
-# Source common utility functions
+# Source build_utils.sh
 if [ -f "$CWD/build_utils.sh" ]; then
     source "$CWD/build_utils.sh"
 else
@@ -73,7 +74,7 @@ TOOLS_DIR="${AOSP_TOOLS_DIR:-$CWD/build-tools/linux_musl-x86/bin}"
 JOBS=${JOBS:-$(nproc)}
 ARCH="${ARCH:-arm64}"
 
-# Toolchain Configuration
+# --- Toolchain Configuration ---
 LLVM="${LLVM:-1}"
 LLVM_IAS="${LLVM_IAS:-1}"
 CROSS_COMPILE="${CROSS_COMPILE:-}"
@@ -115,7 +116,7 @@ export SYSTEM_DLKM_MODULES_BLOCKLIST
 export SYSTEM_DLKM_GEN_FLATTEN_IMAGE="${SYSTEM_DLKM_GEN_FLATTEN_IMAGE:-0}"
 export VENDOR_DLKM_GEN_FLATTEN_IMAGE="${VENDOR_DLKM_GEN_FLATTEN_IMAGE:-0}"
 
-# Universal Build Flags
+# --- Build Flags ---
 BUILD_VENDOR_DLKM="${BUILD_VENDOR_DLKM:-1}"
 BUILD_SYSTEM_DLKM="${BUILD_SYSTEM_DLKM:-1}"
 
@@ -204,7 +205,7 @@ build_oot_modules() {
             local mk_extra_syms=""
             if [ -f "$src_path/Makefile" ]; then
                 echo "  [+] Extracting options from Makefile..."
-                # Create a wrapper to include the techpack Makefile and print KBUILD_OPTIONS and KBUILD_EXTRA_SYMBOLS
+                # Wrapper Makefile to extract KBUILD_OPTIONS and KBUILD_EXTRA_SYMBOLS
                 cat <<EOF > "$OUT_DIR/oot_wrapper.mk"
 KERNEL_SRC := $CWD
 KERNEL_ROOT := $CWD
@@ -322,7 +323,7 @@ stage_modules() {
         fi
     done
 
-    # Remove symlinks
+    # Remove symlinks from module staging tree.
     find "$MODULES_STAGING_DIR" -type l -delete
     
     # We do NOT run depmod here. build_utils.sh will do it in create_modules_staging.
