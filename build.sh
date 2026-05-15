@@ -121,6 +121,11 @@ export VENDOR_DLKM_GEN_FLATTEN_IMAGE="${VENDOR_DLKM_GEN_FLATTEN_IMAGE:-0}"
 BUILD_VENDOR_DLKM="${BUILD_VENDOR_DLKM:-1}"
 BUILD_SYSTEM_DLKM="${BUILD_SYSTEM_DLKM:-1}"
 
+# --- Reproducibility & Determinism ---
+export KBUILD_BUILD_USER="komi-build"
+export KBUILD_BUILD_HOST="kernel"
+export KBUILD_BUILD_TIMESTAMP=$(date -u +%Y-%m-%d)
+
 export PATH="$TOOLS_DIR:$PATH"
 export LD_LIBRARY_PATH="$TOOLS_DIR/../lib64:$LD_LIBRARY_PATH"
 
@@ -142,6 +147,18 @@ validate_environment() {
 }
 
 validate_environment
+
+# --- Phase 0: Kernel Configuration ---
+build_defconfig() {
+    echo "[*] Phase 0: Configuring Kernel ($DEFCONFIG)..."
+    make ARCH="$ARCH" O="$OUT_DIR" $TOOLCHAIN_ARGS "$DEFCONFIG"
+}
+
+save_defconfig() {
+    echo "[*] Saving defconfig..."
+    make ARCH="$ARCH" O="$OUT_DIR" $TOOLCHAIN_ARGS savedefconfig
+    cp "$OUT_DIR/defconfig" "arch/$ARCH/configs/$DEFCONFIG"
+}
 
 # --- Phase 1: Kernel Compilation ---
 build_kernel_image() {
@@ -283,6 +300,7 @@ EOF
 }
 
 build_kernel() {
+    build_defconfig
     build_kernel_image
     build_dtbs
     build_modules
@@ -442,6 +460,8 @@ assemble_images() {
 
 # --- Execution ---
 case "$1" in
+    "defconfig") build_defconfig ;;
+    "savedefconfig") save_defconfig ;;
     "kernel")   build_kernel ;;
     "image")    build_kernel_image ;;
     "dtbs")     build_dtbs ;;
