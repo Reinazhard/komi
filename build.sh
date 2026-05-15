@@ -73,6 +73,25 @@ TOOLS_DIR="${AOSP_TOOLS_DIR:-$CWD/build-tools/linux_musl-x86/bin}"
 JOBS=${JOBS:-$(nproc)}
 ARCH="${ARCH:-arm64}"
 
+# Toolchain Configuration
+LLVM="${LLVM:-1}"
+LLVM_IAS="${LLVM_IAS:-1}"
+CROSS_COMPILE="${CROSS_COMPILE:-}"
+CROSS_COMPILE_COMPAT="${CROSS_COMPILE_COMPAT:-}"
+
+# Enforce mutual exclusivity:
+# CROSS_COMPILE/COMPAT must be empty if LLVM/_IAS=1 is set, and vice versa.
+if [ "$LLVM" -eq 1 ] || [ "$LLVM_IAS" -eq 1 ]; then
+    CROSS_COMPILE=""
+    CROSS_COMPILE_COMPAT=""
+elif [ -n "$CROSS_COMPILE" ] || [ -n "$CROSS_COMPILE_COMPAT" ]; then
+    LLVM=0
+    LLVM_IAS=0
+fi
+
+# Define toolchain arguments for make
+TOOLCHAIN_ARGS="LLVM=$LLVM LLVM_IAS=$LLVM_IAS CROSS_COMPILE=$CROSS_COMPILE CROSS_COMPILE_COMPAT=$CROSS_COMPILE_COMPAT"
+
 export ROOT_DIR="$CWD"
 export OUT_DIR
 export DIST_DIR
@@ -132,7 +151,7 @@ validate_environment
 # --- Phase 1: Kernel Compilation ---
 build_kernel_image() {
     echo "[*] Phase 1a: Compiling Kernel Image..."
-    make ARCH="$ARCH" O="$OUT_DIR" LLVM=1 LLVM_IAS=1 \
+    make ARCH="$ARCH" O="$OUT_DIR" $TOOLCHAIN_ARGS \
          KCFLAGS="$KCFLAGS" \
          HOSTCFLAGS="$HOSTCFLAGS" \
          $EXTRA_KBUILD_FLAGS \
@@ -141,7 +160,7 @@ build_kernel_image() {
 
 build_dtbs() {
     echo "[*] Phase 1b: Compiling DTBs..."
-    make ARCH="$ARCH" O="$OUT_DIR" LLVM=1 LLVM_IAS=1 \
+    make ARCH="$ARCH" O="$OUT_DIR" $TOOLCHAIN_ARGS \
          KCFLAGS="$KCFLAGS" \
          HOSTCFLAGS="$HOSTCFLAGS" \
          $EXTRA_KBUILD_FLAGS \
@@ -150,7 +169,7 @@ build_dtbs() {
 
 build_modules() {
     echo "[*] Phase 1c: Compiling In-Tree Modules..."
-    make ARCH="$ARCH" O="$OUT_DIR" LLVM=1 LLVM_IAS=1 \
+    make ARCH="$ARCH" O="$OUT_DIR" $TOOLCHAIN_ARGS \
          KCFLAGS="$KCFLAGS" \
          HOSTCFLAGS="$HOSTCFLAGS" \
          $EXTRA_KBUILD_FLAGS \
@@ -250,7 +269,7 @@ EOF
                  KERNEL_SRC="$CWD" \
                  KERNEL_ROOT="$CWD" \
                  "$root_var"="$root_val" \
-                 ARCH="$ARCH" LLVM=1 LLVM_IAS=1 \
+                 ARCH="$ARCH" $TOOLCHAIN_ARGS \
                  KCFLAGS="$KCFLAGS" \
                  $EXTRA_KBUILD_FLAGS \
                  $makefile_opts \
@@ -281,7 +300,7 @@ stage_modules() {
     rm -rf "$MODULES_STAGING_DIR"
     mkdir -p "$MODULES_STAGING_DIR"
 
-    make ARCH="$ARCH" O="$OUT_DIR" LLVM=1 LLVM_IAS=1 \
+    make ARCH="$ARCH" O="$OUT_DIR" $TOOLCHAIN_ARGS \
          INSTALL_MOD_PATH="$MODULES_STAGING_DIR" modules_install
     
     # Get KVER reliably
