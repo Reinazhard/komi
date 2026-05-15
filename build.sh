@@ -181,7 +181,7 @@ build_oot_modules() {
     export MAKEFLAGS="O=$OUT_DIR $MAKEFLAGS"
 
     for entry in "${DLKM_SOURCES[@]}"; do
-        IFS=':' read -r rel_src_path partition root_var <<< "$entry"
+        IFS=':' read -r rel_src_path root_var <<< "$entry"
         local src_path="$CWD/$rel_src_path"
         
         if [ -d "$src_path" ]; then
