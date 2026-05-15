@@ -45,6 +45,7 @@ Use the unified build script to compile and package:
 - **Toolchain Flexibility**: Seamlessly switch between LLVM/Clang and GCC.
 - **Automated OOT Building**: Handles complex techpack structures and symbol propagation.
 - **Partition Image Assembly**: Automatically generates `boot.img`, `vendor_boot.img`, `vendor_dlkm.img`, and `system_dlkm.img`.
+  - *Note*: Traditional `bootimg` flashing method is currently **Work in Progress (WIP)**. Use `anykernel3` for reliable deployment.
 - **Modular Design**: Easy to extend for new SoC architectures or partition layouts.
 
 For detailed technical information, refer to [DOCS.md](./DOCS.md).
