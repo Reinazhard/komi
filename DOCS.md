@@ -25,6 +25,11 @@ This document provides a detailed reference for the variables and functions used
 - `DIST_DIR`: Final directory where packaged images (`.img`) are moved.
 - `AOSP_TOOLS_DIR`: Path to the folder containing AOSP binaries (`mkbootimg`, etc.).
 
+### Boot Parameters
+- `KERNEL_CMDLINE`: Main kernel command line for `boot.img`.
+- `KERNEL_VENDOR_CMDLINE`: Vendor command line for `vendor_boot.img`.
+- `BOARD_BOOTCONFIG`: Bash array of bootconfig parameters for `vendor_boot.img` (Header v4+).
+
 ### Image & Partition Parameters
 - `BOOT_HEADER_VERSION`: Android boot image header version (e.g., `4`).
 - `KERNEL_IMAGE_NAME`: The name of the kernel binary to package (default: `Image`).

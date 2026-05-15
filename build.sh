@@ -393,6 +393,7 @@ assemble_images() {
         mkbootimg \
             --kernel "$KERNEL_IMAGE" \
             --header_version "$BOOT_HEADER_VERSION" \
+            --cmdline "${KERNEL_CMDLINE}" \
             --output "$DIST_DIR/boot.img"
     fi
 
@@ -421,9 +422,39 @@ assemble_images() {
     if [ "${#DTB_LIST[@]}" -gt 0 ]; then
         echo "  [+] Building vendor_boot.img..."
         
+        local MKBOOTIMG_ARGS=()
+        MKBOOTIMG_ARGS+=("--header_version" "$BOOT_HEADER_VERSION")
+        MKBOOTIMG_ARGS+=("--vendor_boot" "$DIST_DIR/vendor_boot.img")
+        MKBOOTIMG_ARGS+=("--vendor_cmdline" "${KERNEL_VENDOR_CMDLINE}")
+
         # Stage ramdisk modules if list is provided
         if [ -n "$VENDOR_BOOT_MODULES_LIST" ]; then
             build_vendor_boot_modules
+            local VENDOR_BOOT_STAGING_DIR="$STAGING_DIR/vendor_boot"
+            local VENDOR_RAMDISK="$OUT_DIR/vendor_ramdisk.cpio.gz"
+            echo "  [+] Creating vendor_ramdisk.cpio.gz..."
+            mkbootfs "$VENDOR_BOOT_STAGING_DIR" | gzip > "$VENDOR_RAMDISK"
+            MKBOOTIMG_ARGS+=("--vendor_ramdisk" "$VENDOR_RAMDISK")
+        fi
+
+        # Handle Bootconfig
+        if [ "${#BOARD_BOOTCONFIG[@]}" -gt 0 ]; then
+            local BOOTCONFIG_IMG="$OUT_DIR/vendor-bootconfig.img"
+            echo "  [+] Creating vendor-bootconfig.img..."
+            for param in "${BOARD_BOOTCONFIG[@]}"; do
+                echo "$param"
+            done > "$BOOTCONFIG_IMG"
+            
+            # Ensure "bootconfig" is in the vendor_cmdline
+            if [[ ! "${KERNEL_VENDOR_CMDLINE}" == *"bootconfig"* ]]; then
+                # Update the argument in the array directly
+                for i in "${!MKBOOTIMG_ARGS[@]}"; do
+                    if [[ "${MKBOOTIMG_ARGS[i]}" == "--vendor_cmdline" ]]; then
+                        MKBOOTIMG_ARGS[i+1]="${MKBOOTIMG_ARGS[i+1]} bootconfig"
+                    fi
+                done
+            fi
+            MKBOOTIMG_ARGS+=("--vendor_bootconfig" "$BOOTCONFIG_IMG")
         fi
 
         local dtb_img="$OUT_DIR/dtb.img"
@@ -441,10 +472,8 @@ assemble_images() {
         done
 
         if [ "$found_dtbs" -gt 0 ]; then
-            mkbootimg \
-                --header_version "$BOOT_HEADER_VERSION" \
-                --vendor_boot "$DIST_DIR/vendor_boot.img" \
-                --dtb "$dtb_img"
+            MKBOOTIMG_ARGS+=("--dtb" "$dtb_img")
+            mkbootimg "${MKBOOTIMG_ARGS[@]}"
         fi
     fi
 
