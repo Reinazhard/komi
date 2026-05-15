@@ -54,15 +54,37 @@ else
     exit 1
 fi
 
+# Source common utility functions
+if [ -f "$CWD/build_utils.sh" ]; then
+    source "$CWD/build_utils.sh"
+else
+    echo "[!] Error: build_utils.sh not found in $CWD"
+    exit 1
+fi
+
 # Set defaults for common variables if not in build.env
 OUT_DIR="${OUT_DIR:-$CWD/out}"
 DIST_DIR="${DIST_DIR:-$CWD/dist}"
 STAGING_DIR="$OUT_DIR/staging"
-VENDOR_STAGING="$STAGING_DIR/vendor_dlkm"
-SYSTEM_STAGING="$STAGING_DIR/system_dlkm"
+MODULES_STAGING_DIR="$STAGING_DIR/modules"
+VENDOR_DLKM_STAGING_DIR="$STAGING_DIR/vendor_dlkm"
+SYSTEM_DLKM_STAGING_DIR="$STAGING_DIR/system_dlkm"
 TOOLS_DIR="${AOSP_TOOLS_DIR:-$CWD/build-tools/linux_musl-x86/bin}"
 JOBS=${JOBS:-$(nproc)}
 ARCH="${ARCH:-arm64}"
+
+export ROOT_DIR="$CWD"
+export OUT_DIR
+export DIST_DIR
+export MODULES_STAGING_DIR
+export VENDOR_DLKM_STAGING_DIR
+export SYSTEM_DLKM_STAGING_DIR
+export EXT_MODULES_MAKEFILE=1
+export SYSTEM_DLKM_RE_SIGN="${SYSTEM_DLKM_RE_SIGN:-0}"
+
+# Universal Build Flags
+BUILD_VENDOR_DLKM="${BUILD_VENDOR_DLKM:-1}"
+BUILD_SYSTEM_DLKM="${BUILD_SYSTEM_DLKM:-1}"
 
 export PATH="$TOOLS_DIR:$PATH"
 
@@ -219,57 +241,64 @@ build_kernel() {
 
 # --- Phase 3: Module Splitting & Staging ---
 stage_modules() {
-    echo "[*] Phase 3: Staging and Splitting Modules..."
-    rm -rf "$STAGING_DIR"
-    mkdir -p "$VENDOR_STAGING/lib/modules"
-    mkdir -p "$SYSTEM_STAGING/lib/modules"
+    echo "[*] Phase 3: Staging Modules..."
+    rm -rf "$MODULES_STAGING_DIR"
+    mkdir -p "$MODULES_STAGING_DIR"
 
-    TEMP_STAGING="$STAGING_DIR/temp"
-    mkdir -p "$TEMP_STAGING"
     make ARCH="$ARCH" O="$OUT_DIR" LLVM=1 LLVM_IAS=1 \
-         INSTALL_MOD_PATH="$TEMP_STAGING" modules_install
+         INSTALL_MOD_PATH="$MODULES_STAGING_DIR" modules_install
     
-    KVER=$(ls "$TEMP_STAGING/lib/modules")
-    
-    echo "  [+] Sorting in-tree modules based on $VENDOR_DLKM_MODULES_LIST"
-    mkdir -p "$VENDOR_STAGING/lib/modules/$KVER"
-    mkdir -p "$SYSTEM_STAGING/lib/modules/$KVER"
-    
-    for file in modules.order modules.builtin modules.builtin.modinfo; do
-        if [ -f "$TEMP_STAGING/lib/modules/$KVER/$file" ]; then
-            cp "$TEMP_STAGING/lib/modules/$KVER/$file" "$VENDOR_STAGING/lib/modules/$KVER/"
-            cp "$TEMP_STAGING/lib/modules/$KVER/$file" "$SYSTEM_STAGING/lib/modules/$KVER/"
+    # Get KVER reliably
+    if [ -f "$OUT_DIR/include/config/kernel.release" ]; then
+        KVER=$(cat "$OUT_DIR/include/config/kernel.release")
+    else
+        KVER=$(ls -1 "$MODULES_STAGING_DIR/lib/modules" 2>/dev/null | head -n 1 || true)
+        if [ -z "$KVER" ] || [ "$KVER" == "*" ]; then
+            KVER="unknown"
         fi
-    done
-    
-    if [ -f "$VENDOR_DLKM_MODULES_LIST" ]; then
-        while read -r mod_path; do
-            mod_name=$(basename "$mod_path")
-            find "$TEMP_STAGING/lib/modules/$KVER" -name "$mod_name" -exec mv {} "$VENDOR_STAGING/lib/modules/$KVER/" \;
-        done < "$VENDOR_DLKM_MODULES_LIST"
     fi
 
-    find "$TEMP_STAGING/lib/modules/$KVER" -name "*.ko" -exec mv {} "$SYSTEM_STAGING/lib/modules/$KVER/" \;
+    # Ensure base, kernel, and extra directories exist to avoid find errors in build_utils.sh
+    mkdir -p "$MODULES_STAGING_DIR/lib/modules/$KVER/kernel"
+    mkdir -p "$MODULES_STAGING_DIR/lib/modules/$KVER/extra"
+    
+    # Touch necessary files to prevent missing file errors in build_utils.sh if no in-tree modules exist
+    touch "$MODULES_STAGING_DIR/lib/modules/$KVER/modules.order"
+    touch "$MODULES_STAGING_DIR/lib/modules/$KVER/modules.builtin"
+    touch "$MODULES_STAGING_DIR/lib/modules/$KVER/modules.builtin.modinfo"
 
-    # OOT Module Collection
+    # OOT Module Collection into unified staging
     echo "  [+] Collecting OOT modules from output tree..."
     for oot_dir in "${OOT_MODULE_DIRS[@]}"; do
         if [ -d "$OUT_DIR/$oot_dir" ]; then
-            find "$OUT_DIR/$oot_dir" -name "*.ko" -exec cp {} "$VENDOR_STAGING/lib/modules/$KVER/" \;
+            find "$OUT_DIR/$oot_dir" -name "*.ko" -exec cp {} "$MODULES_STAGING_DIR/lib/modules/$KVER/extra/" \;
         fi
     done
 
-    find "$STAGING_DIR" -type l -delete
-
-    echo "  [+] Running depmod..."
-    depmod -b "$VENDOR_STAGING" "$KVER"
-    depmod -b "$SYSTEM_STAGING" "$KVER"
+    # Remove symlinks
+    find "$MODULES_STAGING_DIR" -type l -delete
+    
+    # We do NOT run depmod here. build_utils.sh will do it in create_modules_staging.
+    # However, if DLKM images are completely disabled, we need depmod for the unified tree.
+    if [ "$BUILD_VENDOR_DLKM" -eq 0 ] && [ "$BUILD_SYSTEM_DLKM" -eq 0 ]; then
+        echo "  [+] DLKM images disabled. Running depmod on unified staging directory..."
+        depmod -b "$MODULES_STAGING_DIR" "$KVER"
+    fi
 }
 
 # --- Phase 4: Image Assembly ---
 assemble_images() {
     echo "[*] Phase 4: Packaging Images..."
+
+    if [ ! -d "$MODULES_STAGING_DIR/lib/modules" ] || [ -z "$(ls -A "$MODULES_STAGING_DIR/lib/modules" 2>/dev/null)" ]; then
+        echo "  [!] Modules staging directory not found or empty. Running stage_modules..."
+        stage_modules
+    fi
+
     mkdir -p "$DIST_DIR"
+    if [ -f "$OUT_DIR/System.map" ]; then
+        cp "$OUT_DIR/System.map" "$DIST_DIR/"
+    fi
     local KERNEL_IMAGE="$OUT_DIR/arch/$ARCH/boot/${KERNEL_IMAGE_NAME:-Image}"
 
     # 1. boot.img
@@ -327,22 +356,19 @@ assemble_images() {
         fi
     fi
 
-    # 4. vendor_dlkm.img & system_dlkm.img
-    local img_size="${PARTITION_SIZE:-536870912}"
-    for part in "vendor_dlkm" "system_dlkm"; do
-        echo "  [+] Building ${part}.img..."
-        PROP_FILE="$OUT_DIR/${part}.prop"
-        cat <<EOF > "$PROP_FILE"
-fs_type=ext4
-mount_point=${part}
-partition_size=$img_size
-extfs_sparse_flag=-s
-ext_mkuserimg=mkuserimg_mke2fs
-mke2fs=mke2fs
-e2fsdroid=e2fsdroid
-EOF
-        build_image "$STAGING_DIR/$part" "$PROP_FILE" "$DIST_DIR/${part}.img" "/${part}"
-    done
+    # 4. vendor_dlkm.img
+    if [ "$BUILD_VENDOR_DLKM" -eq 1 ]; then
+        echo "  [+] Building vendor_dlkm.img..."
+        export VENDOR_DLKM_FS_TYPE="${VENDOR_DLKM_FS_TYPE:-ext4}"
+        build_vendor_dlkm
+    fi
+
+    # 5. system_dlkm.img
+    if [ "$BUILD_SYSTEM_DLKM" -eq 1 ]; then
+        echo "  [+] Building system_dlkm.img..."
+        export SYSTEM_DLKM_FS_TYPE="${SYSTEM_DLKM_FS_TYPE:-ext4}"
+        build_system_dlkm
+    fi
 }
 
 # --- Execution ---
