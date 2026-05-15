@@ -34,7 +34,7 @@ ln -sf "$TARGET_DIR/build_utils.sh" "build_utils.sh"
 # 3. Validate tool availability
 validate_environment() {
     echo "[*] Validating build tools..."
-    local tools_dir="$CWD/$TARGET_DIR/tools"
+    local tools_dir="$CWD/$TARGET_DIR/tools/bin"
     local required_tools=("mkbootimg" "mkdtboimg" "avbtool" "depmod" "mke2fs")
     
     # Temporarily add tools dir to PATH for validation
