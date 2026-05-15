@@ -82,6 +82,20 @@ export SYSTEM_DLKM_STAGING_DIR
 export EXT_MODULES_MAKEFILE=1
 export SYSTEM_DLKM_RE_SIGN="${SYSTEM_DLKM_RE_SIGN:-0}"
 
+# AOSP Blocklists and Lists (populated by build.env)
+export VENDOR_DLKM_MODULES_LIST
+export SYSTEM_DLKM_MODULES_LIST
+export VENDOR_BOOT_MODULES_LIST
+export VENDOR_BOOT_MODULES_BLOCKLIST
+export MODULES_RECOVERY_LIST
+export MODULES_BLOCKLIST # Generic blocklist fallback if needed
+export VENDOR_DLKM_MODULES_BLOCKLIST
+export SYSTEM_DLKM_MODULES_BLOCKLIST
+
+# AOSP Flatten image support
+export SYSTEM_DLKM_GEN_FLATTEN_IMAGE="${SYSTEM_DLKM_GEN_FLATTEN_IMAGE:-0}"
+export VENDOR_DLKM_GEN_FLATTEN_IMAGE="${VENDOR_DLKM_GEN_FLATTEN_IMAGE:-0}"
+
 # Universal Build Flags
 BUILD_VENDOR_DLKM="${BUILD_VENDOR_DLKM:-1}"
 BUILD_SYSTEM_DLKM="${BUILD_SYSTEM_DLKM:-1}"
@@ -286,6 +300,19 @@ stage_modules() {
     fi
 }
 
+# Staging for vendor_boot ramdisk
+build_vendor_boot_modules() {
+    echo "  [+] Staging modules for vendor_boot ramdisk..."
+    local VENDOR_BOOT_STAGING_DIR="$STAGING_DIR/vendor_boot"
+    rm -rf "$VENDOR_BOOT_STAGING_DIR"
+
+    # Stage vendor_boot modules. 
+    # $VENDOR_BOOT_MODULES_LIST limits what goes in the ramdisk.
+    # $MODULES_RECOVERY_LIST specifies what loads in recovery.
+    create_modules_staging "${VENDOR_BOOT_MODULES_LIST}" "$MODULES_STAGING_DIR" \
+        "$VENDOR_BOOT_STAGING_DIR" "${VENDOR_BOOT_MODULES_BLOCKLIST}" "${MODULES_RECOVERY_LIST}" "" "" ""
+}
+
 # --- Phase 4: Image Assembly ---
 assemble_images() {
     echo "[*] Phase 4: Packaging Images..."
@@ -334,6 +361,12 @@ assemble_images() {
     # 3. vendor_boot.img (with concatenated DTB)
     if [ "${#DTB_LIST[@]}" -gt 0 ]; then
         echo "  [+] Building vendor_boot.img..."
+        
+        # Stage ramdisk modules if list is provided
+        if [ -n "$VENDOR_BOOT_MODULES_LIST" ]; then
+            build_vendor_boot_modules
+        fi
+
         local dtb_img="$OUT_DIR/dtb.img"
         rm -f "$dtb_img"
         
