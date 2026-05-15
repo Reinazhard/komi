@@ -107,6 +107,28 @@ echo "  Kernel Unified Build System"
 echo "  Device: ${DEVICE_NAME:-Unknown}"
 echo "=================================================="
 
+# --- Pre-flight Validation ---
+validate_environment() {
+    echo "  [*] Validating build environment..."
+    local required_tools=("mkbootimg" "mkdtboimg" "avbtool" "depmod" "mke2fs")
+    for tool in "${required_tools[@]}"; do
+        if ! command -v "$tool" >/dev/null 2>&1; then
+            echo "  [!] Error: Required tool '$tool' not found in PATH."
+            exit 1
+        fi
+    done
+
+    local list_vars=("VENDOR_DLKM_MODULES_LIST" "SYSTEM_DLKM_MODULES_LIST" "VENDOR_BOOT_MODULES_LIST" "MODULES_RECOVERY_LIST" "MODULES_BLOCKLIST" "VENDOR_DLKM_MODULES_BLOCKLIST" "SYSTEM_DLKM_MODULES_BLOCKLIST" "VENDOR_BOOT_MODULES_BLOCKLIST")
+    for var in "${list_vars[@]}"; do
+        local file_path="${!var}"
+        if [ -n "$file_path" ] && [ ! -f "$file_path" ]; then
+             echo "  [!] Warning: $var points to missing file: $file_path"
+        fi
+    done
+}
+
+validate_environment
+
 # --- Phase 1: Kernel Compilation ---
 build_kernel_image() {
     echo "[*] Phase 1a: Compiling Kernel Image..."
