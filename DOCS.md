@@ -9,6 +9,7 @@ This document provides a detailed reference for the variables and functions used
 ### Identity & Architecture
 - `DEVICE_NAME`: The name of the target device (used for logging/display).
 - `ARCH`: Target architecture (default: `arm64`).
+- `DEFCONFIG`: Target configuration file. Supports fragmented configs (e.g., `"gki_defconfig vendor/sun_perf.config"`). Note that `save_defconfig` is only supported for single-file configurations.
 
 ### Compiler & Kbuild Configuration
 - `KCFLAGS`: Kernel C flags passed to all `make` calls.

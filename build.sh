@@ -151,10 +151,15 @@ validate_environment
 # --- Phase 0: Kernel Configuration ---
 build_defconfig() {
     echo "[*] Phase 0: Configuring Kernel ($DEFCONFIG)..."
-    make ARCH="$ARCH" O="$OUT_DIR" $TOOLCHAIN_ARGS "$DEFCONFIG"
+    make ARCH="$ARCH" O="$OUT_DIR" $TOOLCHAIN_ARGS $DEFCONFIG
 }
 
 save_defconfig() {
+    if [[ "$DEFCONFIG" == *" "* ]]; then
+        echo "[!] Error: save_defconfig is not supported when using multiple fragments."
+        echo "    Current DEFCONFIG: $DEFCONFIG"
+        exit 1
+    fi
     echo "[*] Saving defconfig..."
     make ARCH="$ARCH" O="$OUT_DIR" $TOOLCHAIN_ARGS savedefconfig
     cp "$OUT_DIR/defconfig" "arch/$ARCH/configs/$DEFCONFIG"
