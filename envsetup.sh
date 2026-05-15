@@ -3,12 +3,12 @@
 #
 # Copyright (C) 2026 M. "Harumajati" Alfarozi
 #
-# Environment Setup Script for Unified Build System
+# Environment Setup Script for Kernel Out-of-tree Module Integration (KOMI)
 # Usage: curl -sL <link> | bash
 
 set -e
 
-REPO_URL="https://github.com/Reinazhard/kernel_build"
+REPO_URL="https://github.com/Reinazhard/komi"
 TARGET_DIR="build-kernel"
 CWD=$(pwd)
 

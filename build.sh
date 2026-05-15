@@ -122,7 +122,7 @@ BUILD_SYSTEM_DLKM="${BUILD_SYSTEM_DLKM:-1}"
 export PATH="$TOOLS_DIR:$PATH"
 
 echo "=================================================="
-echo "  Kernel Unified Build System"
+echo "  Kernel Out-of-tree Module Integration (KOMI)"
 echo "  Device: ${DEVICE_NAME:-Unknown}"
 echo "=================================================="
 
