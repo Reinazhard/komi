@@ -30,6 +30,13 @@ This document provides a detailed reference for the variables and functions used
 - `KERNEL_VENDOR_CMDLINE`: Vendor command line for `vendor_boot.img`.
 - `BOARD_BOOTCONFIG`: Bash array of bootconfig parameters for `vendor_boot.img` (Header v4+).
 
+### Deployment Configuration
+- `FLASH_METHOD`: The output format for the kernel deployment.
+  - `bootimg`: Traditional Android `.img` files (requires `mkbootimg`).
+  - `anykernel3`: A flashable `.zip` archive that patches the kernel into existing images on the device (preserves original ramdisk).
+- `AK3_DIR`: Path to the AnyKernel3 template directory.
+- `AK3_ZIP_NAME`: The name of the resulting flashable zip file.
+
 ### Image & Partition Parameters
 - `BOOT_HEADER_VERSION`: Android boot image header version (e.g., `4`).
 - `KERNEL_IMAGE_NAME`: The name of the kernel binary to package (default: `Image`).

@@ -373,6 +373,56 @@ build_vendor_boot_modules() {
 }
 
 # --- Phase 4: Image Assembly ---
+sign_image() {
+    local image_path="$1"
+    local partition_name="$2"
+    if [ "$AVB_SIGN_BOOT_IMG" -eq 1 ]; then
+        echo "  [+] Signing $partition_name..."
+        avbtool add_hash_footer \
+            --partition_name "$partition_name" \
+            --partition_size "$AVB_BOOT_PARTITION_SIZE" \
+            --image "$image_path" \
+            --algorithm "$AVB_BOOT_ALGORITHM" \
+            --key "$AVB_BOOT_KEY"
+    fi
+}
+
+stage_anykernel() {
+    echo "[*] Phase 4 (AK3): Packaging AnyKernel3 Zip..."
+    local AK3_STAGING_DIR="$OUT_DIR/ak3_staging"
+    rm -rf "$AK3_STAGING_DIR"
+    mkdir -p "$AK3_STAGING_DIR"
+
+    if [ ! -d "$AK3_DIR" ]; then
+        echo "  [!] Error: AnyKernel3 directory ($AK3_DIR) not found."
+        exit 1
+    fi
+
+    # Copy AK3 template
+    cp -r "$AK3_DIR"/* "$AK3_STAGING_DIR/"
+
+    # Copy Kernel & DTB/DTBO
+    local KERNEL_IMAGE
+    if [ -n "$KERNEL_BINARY_PATH" ] && [ -f "$KERNEL_BINARY_PATH" ]; then
+        KERNEL_IMAGE="$KERNEL_BINARY_PATH"
+    else
+        KERNEL_IMAGE="$OUT_DIR/arch/$ARCH/boot/${KERNEL_IMAGE_NAME:-Image}"
+    fi
+    cp "$KERNEL_IMAGE" "$AK3_STAGING_DIR/"
+    
+    # We already have dtb.img from assemble_images concatenation
+    [ -f "$OUT_DIR/dtb.img" ] && cp "$OUT_DIR/dtb.img" "$AK3_STAGING_DIR/dtb"
+    [ -f "$DIST_DIR/dtbo.img" ] && cp "$DIST_DIR/dtbo.img" "$AK3_STAGING_DIR/"
+
+    # Inline DLKMs
+    [ -f "$DIST_DIR/vendor_dlkm.img" ] && cp "$DIST_DIR/vendor_dlkm.img" "$AK3_STAGING_DIR/"
+    [ -f "$DIST_DIR/system_dlkm.img" ] && cp "$DIST_DIR/system_dlkm.img" "$AK3_STAGING_DIR/"
+
+    # Create Zip
+    (cd "$AK3_STAGING_DIR" && zip -r9 "$DIST_DIR/$AK3_ZIP_NAME" * -x .git README.md)
+    echo "  [+] AnyKernel3 zip created: $DIST_DIR/$AK3_ZIP_NAME"
+}
+
 assemble_images() {
     echo "[*] Phase 4: Packaging Images..."
 
@@ -385,19 +435,8 @@ assemble_images() {
     if [ -f "$OUT_DIR/System.map" ]; then
         cp "$OUT_DIR/System.map" "$DIST_DIR/"
     fi
-    local KERNEL_IMAGE="$OUT_DIR/arch/$ARCH/boot/${KERNEL_IMAGE_NAME:-Image}"
 
-    # 1. boot.img
-    if [ -f "$KERNEL_IMAGE" ]; then
-        echo "  [+] Packaging boot.img..."
-        mkbootimg \
-            --kernel "$KERNEL_IMAGE" \
-            --header_version "$BOOT_HEADER_VERSION" \
-            --cmdline "${KERNEL_CMDLINE}" \
-            --output "$DIST_DIR/boot.img"
-    fi
-
-    # 2. dtbo.img
+    # 1. dtbo.img (Built first as it may be needed by both methods)
     if [ "${#DTBO_LIST[@]}" -gt 0 ]; then
         echo "  [+] Building dtbo.img..."
         local dtbo_paths=()
@@ -411,56 +450,27 @@ assemble_images() {
         done
 
         if [ "${#dtbo_paths[@]}" -gt 0 ]; then
-            if [ "$VERBOSE" -eq 1 ]; then
-                echo "  [DEBUG] Running mkdtboimg create \"$DIST_DIR/dtbo.img\" $MKDTBOIMG_OPTIONS ${dtbo_paths[*]}"
-            fi
             mkdtboimg create "$DIST_DIR/dtbo.img" $MKDTBOIMG_OPTIONS "${dtbo_paths[@]}"
         fi
     fi
 
-    # 3. vendor_boot.img (with concatenated DTB)
+    # 2. vendor_dlkm.img & system_dlkm.img (Built first for inlining)
+    if [ "$BUILD_VENDOR_DLKM" -eq 1 ]; then
+        echo "  [+] Building vendor_dlkm.img..."
+        export VENDOR_DLKM_FS_TYPE="${VENDOR_DLKM_FS_TYPE:-ext4}"
+        build_vendor_dlkm
+    fi
+    if [ "$BUILD_SYSTEM_DLKM" -eq 1 ]; then
+        echo "  [+] Building system_dlkm.img..."
+        export SYSTEM_DLKM_FS_TYPE="${SYSTEM_DLKM_FS_TYPE:-ext4}"
+        build_system_dlkm
+    fi
+
+    # Concatenate DTB (Used by both methods)
+    local dtb_img="$OUT_DIR/dtb.img"
+    rm -f "$dtb_img"
+    local found_dtbs=0
     if [ "${#DTB_LIST[@]}" -gt 0 ]; then
-        echo "  [+] Building vendor_boot.img..."
-        
-        local MKBOOTIMG_ARGS=()
-        MKBOOTIMG_ARGS+=("--header_version" "$BOOT_HEADER_VERSION")
-        MKBOOTIMG_ARGS+=("--vendor_boot" "$DIST_DIR/vendor_boot.img")
-        MKBOOTIMG_ARGS+=("--vendor_cmdline" "${KERNEL_VENDOR_CMDLINE}")
-
-        # Stage ramdisk modules if list is provided
-        if [ -n "$VENDOR_BOOT_MODULES_LIST" ]; then
-            build_vendor_boot_modules
-            local VENDOR_BOOT_STAGING_DIR="$STAGING_DIR/vendor_boot"
-            local VENDOR_RAMDISK="$OUT_DIR/vendor_ramdisk.cpio.gz"
-            echo "  [+] Creating vendor_ramdisk.cpio.gz..."
-            mkbootfs "$VENDOR_BOOT_STAGING_DIR" | gzip > "$VENDOR_RAMDISK"
-            MKBOOTIMG_ARGS+=("--vendor_ramdisk" "$VENDOR_RAMDISK")
-        fi
-
-        # Handle Bootconfig
-        if [ "${#BOARD_BOOTCONFIG[@]}" -gt 0 ]; then
-            local BOOTCONFIG_IMG="$OUT_DIR/vendor-bootconfig.img"
-            echo "  [+] Creating vendor-bootconfig.img..."
-            for param in "${BOARD_BOOTCONFIG[@]}"; do
-                echo "$param"
-            done > "$BOOTCONFIG_IMG"
-            
-            # Ensure "bootconfig" is in the vendor_cmdline
-            if [[ ! "${KERNEL_VENDOR_CMDLINE}" == *"bootconfig"* ]]; then
-                # Update the argument in the array directly
-                for i in "${!MKBOOTIMG_ARGS[@]}"; do
-                    if [[ "${MKBOOTIMG_ARGS[i]}" == "--vendor_cmdline" ]]; then
-                        MKBOOTIMG_ARGS[i+1]="${MKBOOTIMG_ARGS[i+1]} bootconfig"
-                    fi
-                done
-            fi
-            MKBOOTIMG_ARGS+=("--vendor_bootconfig" "$BOOTCONFIG_IMG")
-        fi
-
-        local dtb_img="$OUT_DIR/dtb.img"
-        rm -f "$dtb_img"
-        
-        local found_dtbs=0
         for dtb in "${DTB_LIST[@]}"; do
             local path="$OUT_DIR/$DTS_OUT_DIR/$dtb"
             if [ -f "$path" ]; then
@@ -470,25 +480,103 @@ assemble_images() {
                 echo "  [!] Warning: DTB $dtb not found at $path"
             fi
         done
+    fi
 
-        if [ "$found_dtbs" -gt 0 ]; then
-            MKBOOTIMG_ARGS+=("--dtb" "$dtb_img")
-            mkbootimg "${MKBOOTIMG_ARGS[@]}"
+    if [ "$FLASH_METHOD" == "anykernel3" ]; then
+        stage_anykernel
+        return 0
+    fi
+
+    # --- Traditional boot image assembly ---
+    local KERNEL_IMAGE
+    if [ -n "$KERNEL_BINARY_PATH" ] && [ -f "$KERNEL_BINARY_PATH" ]; then
+        KERNEL_IMAGE="$KERNEL_BINARY_PATH"
+    else
+        KERNEL_IMAGE="$OUT_DIR/arch/$ARCH/boot/${KERNEL_IMAGE_NAME:-Image}"
+    fi
+
+    # 1. boot.img
+    if [ -f "$KERNEL_IMAGE" ]; then
+        echo "  [+] Packaging boot.img..."
+        local BOOT_ARGS=()
+        BOOT_ARGS+=("--kernel" "$KERNEL_IMAGE")
+        BOOT_ARGS+=("--header_version" "$BOOT_HEADER_VERSION")
+        BOOT_ARGS+=("--cmdline" "${KERNEL_CMDLINE}")
+        BOOT_ARGS+=("--output" "$DIST_DIR/boot.img")
+
+        # Offsets
+        [ -n "$BASE_ADDRESS" ] && BOOT_ARGS+=("--base" "$BASE_ADDRESS")
+        [ -n "$PAGE_SIZE" ]    && BOOT_ARGS+=("--pagesize" "$PAGE_SIZE")
+        [ -n "$KERNEL_OFFSET" ] && BOOT_ARGS+=("--kernel_offset" "$KERNEL_OFFSET")
+        [ -n "$RAMDISK_OFFSET" ] && BOOT_ARGS+=("--ramdisk_offset" "$RAMDISK_OFFSET")
+        [ -n "$TAGS_OFFSET" ] && BOOT_ARGS+=("--tags_offset" "$TAGS_OFFSET")
+        [ -n "$DTB_OFFSET" ] && BOOT_ARGS+=("--dtb_offset" "$DTB_OFFSET")
+
+        # GKI Ramdisk
+        if [ -n "$GKI_RAMDISK_PREBUILT_BINARY" ] && [ -f "$GKI_RAMDISK_PREBUILT_BINARY" ]; then
+            echo "  [+] Using GKI prebuilt ramdisk..."
+            BOOT_ARGS+=("--ramdisk" "$GKI_RAMDISK_PREBUILT_BINARY")
         fi
+
+        # Extra Args
+        [ -n "$MKBOOTIMG_EXTRA_ARGS" ] && BOOT_ARGS+=($MKBOOTIMG_EXTRA_ARGS)
+
+        mkbootimg "${BOOT_ARGS[@]}"
+        sign_image "$DIST_DIR/boot.img" "boot"
     fi
 
-    # 4. vendor_dlkm.img
-    if [ "$BUILD_VENDOR_DLKM" -eq 1 ]; then
-        echo "  [+] Building vendor_dlkm.img..."
-        export VENDOR_DLKM_FS_TYPE="${VENDOR_DLKM_FS_TYPE:-ext4}"
-        build_vendor_dlkm
-    fi
+    # 3. vendor_boot.img
+    if [ "$found_dtbs" -gt 0 ]; then
+        echo "  [+] Building vendor_boot.img..."
+        
+        local V_BOOT_ARGS=()
+        V_BOOT_ARGS+=("--header_version" "$BOOT_HEADER_VERSION")
+        V_BOOT_ARGS+=("--vendor_boot" "$DIST_DIR/vendor_boot.img")
+        V_BOOT_ARGS+=("--vendor_cmdline" "${KERNEL_VENDOR_CMDLINE}")
 
-    # 5. system_dlkm.img
-    if [ "$BUILD_SYSTEM_DLKM" -eq 1 ]; then
-        echo "  [+] Building system_dlkm.img..."
-        export SYSTEM_DLKM_FS_TYPE="${SYSTEM_DLKM_FS_TYPE:-ext4}"
-        build_system_dlkm
+        # Offsets
+        [ -n "$BASE_ADDRESS" ] && V_BOOT_ARGS+=("--base" "$BASE_ADDRESS")
+        [ -n "$PAGE_SIZE" ]    && V_BOOT_ARGS+=("--pagesize" "$PAGE_SIZE")
+        [ -n "$KERNEL_OFFSET" ] && V_BOOT_ARGS+=("--kernel_offset" "$KERNEL_OFFSET")
+        [ -n "$RAMDISK_OFFSET" ] && V_BOOT_ARGS+=("--ramdisk_offset" "$RAMDISK_OFFSET")
+        [ -n "$TAGS_OFFSET" ] && V_BOOT_ARGS+=("--tags_offset" "$TAGS_OFFSET")
+        [ -n "$DTB_OFFSET" ] && V_BOOT_ARGS+=("--dtb_offset" "$DTB_OFFSET")
+
+        # Extra Args
+        [ -n "$MKBOOTIMG_EXTRA_ARGS" ] && V_BOOT_ARGS+=($MKBOOTIMG_EXTRA_ARGS)
+
+        # Stage ramdisk modules if list is provided
+        if [ -n "$VENDOR_BOOT_MODULES_LIST" ]; then
+            build_vendor_boot_modules
+            local V_RAMDISK="$OUT_DIR/vendor_ramdisk.cpio.gz"
+            echo "  [+] Creating vendor_ramdisk.cpio.gz..."
+            mkbootfs "$STAGING_DIR/vendor_boot" | gzip > "$V_RAMDISK"
+            V_BOOT_ARGS+=("--vendor_ramdisk" "$V_RAMDISK")
+        fi
+
+        # Handle Bootconfig
+        if [ "${#BOARD_BOOTCONFIG[@]}" -gt 0 ]; then
+            local BC_IMG="$OUT_DIR/vendor-bootconfig.img"
+            echo "  [+] Creating vendor-bootconfig.img..."
+            rm -f "$BC_IMG"
+            for param in "${BOARD_BOOTCONFIG[@]}"; do
+                echo "$param" >> "$BC_IMG"
+            done
+            
+            # Ensure "bootconfig" is in the vendor_cmdline
+            if [[ ! "${KERNEL_VENDOR_CMDLINE}" == *"bootconfig"* ]]; then
+                for i in "${!V_BOOT_ARGS[@]}"; do
+                    if [[ "${V_BOOT_ARGS[i]}" == "--vendor_cmdline" ]]; then
+                        V_BOOT_ARGS[i+1]="${V_BOOT_ARGS[i+1]} bootconfig"
+                    fi
+                done
+            fi
+            V_BOOT_ARGS+=("--vendor_bootconfig" "$BC_IMG")
+        fi
+
+        V_BOOT_ARGS+=("--dtb" "$dtb_img")
+        mkbootimg "${V_BOOT_ARGS[@]}"
+        sign_image "$DIST_DIR/vendor_boot.img" "vendor_boot"
     fi
 }
 
